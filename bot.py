@@ -5,6 +5,7 @@ import time
 import threading
 from flask import Flask
 import logging
+import requests
 
 # ================== ОБМАНКА ДЛЯ RENDER ==================
 app = Flask(__name__)
@@ -23,6 +24,37 @@ def run_flask():
 flask_thread = threading.Thread(target=run_flask)
 flask_thread.daemon = True
 flask_thread.start()
+# =======================================================
+
+# ================== АВТО-ПИНГ ДЛЯ RENDER ==================
+def keep_alive():
+    """Каждые 10 минут отправляет запрос чтобы Render не уснул"""
+    while True:
+        try:
+            # Получаем URL нашего приложения
+            render_url = os.environ.get('RENDER_URL')
+            if not render_url:
+                # Если URL не указан, пробуем определить автоматически
+                service_name = os.environ.get('RENDER_SERVICE_NAME')
+                if service_name:
+                    render_url = f"https://{service_name}.onrender.com"
+            
+            if render_url:
+                response = requests.get(f"{render_url}/health", timeout=10)
+                logging.info(f"✅ Пинг отправлен: {response.status_code}")
+            else:
+                logging.info("✅ Бот активен (пинг пропущен - URL не настроен)")
+                
+        except Exception as e:
+            logging.warning(f"⚠️ Пинг не удался: {e}")
+        
+        # Ждем 10 минут до следующего пина
+        time.sleep(600)
+
+# Запускаем авто-пинг в отдельном потоке
+ping_thread = threading.Thread(target=keep_alive)
+ping_thread.daemon = True
+ping_thread.start()
 # =======================================================
 
 # Настраиваем логирование
@@ -44,9 +76,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 # Список агентов
 agents = [
-    {"name": "Алан", "phone": "+7 (996) 882-57-34", "status": "свободен"},
-    {"name": "Рустам", "phone": "+7 (995) 943-14-07", "status": "свободен"},
-    {"name": "Денис", "phone": "+7 (963) 891-55-55", "status": "свободен"}
+    {"name": "Александр", "phone": "+7 (911) 123-45-67", "status": "свободен"},
+    {"name": "Мария", "phone": "+7 (912) 234-56-78", "status": "свободен"},
+    {"name": "Дмитрий", "phone": "+7 (913) 345-67-89", "status": "свободен"}
 ]
 
 current_agent_index = 0
@@ -84,35 +116,20 @@ def send_agent_number(message):
 💡 Позвоните или напишите в WhatsApp для консультации.
         """
         
-        # Отправляем сообщение с защитой от ошибок
-        sent_message = bot.send_message(message.chat.id, agent_info)
+        bot.send_message(message.chat.id, agent_info)
         logger.info(f"✅ Выдан агент {agent['name']} пользователю {message.chat.id}")
         
-        # Переходим к следующему агенту
         current_agent_index = (current_agent_index + 1) % len(agents)
         
-        # Отправляем подтверждение
-        time.sleep(1)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке номера агента: {e}")
         bot.send_message(
             message.chat.id,
-            "✅ Номер агента успешно выдан! Для получения следующего агента нажмите кнопку снова.",
+            "⚠️ Произошла временная ошибка. Пожалуйста, попробуйте снова.",
             reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add(
                 types.KeyboardButton("📞 Получить номер агента")
             )
         )
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при отправке номера агента: {e}")
-        try:
-            bot.send_message(
-                message.chat.id,
-                "⚠️ Произошла временная ошибка. Пожалуйста, попробуйте снова через несколько секунд.",
-                reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add(
-                    types.KeyboardButton("📞 Получить номер агента")
-                )
-            )
-        except:
-            pass
 
 @bot.message_handler(func=lambda message: True)
 def handle_other_messages(message):
@@ -128,36 +145,20 @@ def handle_other_messages(message):
     except Exception as e:
         logger.error(f"❌ Ошибка в handle_other_messages: {e}")
 
-# Обработчик ошибок бота
-@bot.message_handler(content_types=['text', 'contact', 'location'])
-def handle_all_messages(message):
-    try:
-        if message.text == "📞 Получить номер агента":
-            send_agent_number(message)
-        elif message.text and not message.text.startswith('/'):
-            handle_other_messages(message)
-    except Exception as e:
-        logger.error(f"❌ Ошибка в handle_all_messages: {e}")
-
-# Запуск бота с улучшенной обработкой ошибок
+# Запуск бота
 if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("🚀 БОТ ЗАПУСКАЕТСЯ НА RENDER")
+    logger.info("✅ Flask сервер запущен")
+    logger.info("✅ Авто-пинг активирован")
     logger.info("=" * 50)
     
-    max_retries = 5
-    retry_delay = 10
-    
-    for attempt in range(max_retries):
+    while True:
         try:
-            logger.info(f"♻️ Попытка запуска {attempt + 1}/{max_retries}")
+            logger.info("🔄 Запуск polling...")
             bot.infinity_polling(timeout=90, long_polling_timeout=90)
         except Exception as e:
-            logger.error(f"❌ Ошибка на попытке {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                logger.info(f"⏳ Перезапуск через {retry_delay} секунд...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Увеличиваем задержку с каждой попыткой
-            else:
-                logger.error("💥 Достигнут лимит попыток перезапуска")
+            logger.error(f"❌ Ошибка: {e}")
+            logger.info("♻️ Перезапуск через 15 секунд...")
+            time.sleep(15)
 
